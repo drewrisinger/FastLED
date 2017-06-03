@@ -11,17 +11,26 @@ FASTLED_NAMESPACE_BEGIN
 
 #define ARM_HARDWARE_SPI
 
+/*
+CC3200 SPI Pins
+
+GPIO#	SPI FUNC	QFN Pin#	Mod Pin#	PINMUX Mode
+14		CLK			5			5			7
+15		MISO		6			6			7
+16		MOSI		7			7			7
+17		CS			8			8			7
+
+31		CLK			45			--------	7
+30		MISO		53			42			7
+32		MOSI		52			--------	8
+0		CS			50			44			9
+*/
+
 template <uint8_t _DATA_PIN, uint8_t _CLOCK_PIN, uint8_t _SPI_CLOCK_DIVIDER>
 class ARMHardwareSPIOutput {
   Selectable *m_pSelect;
 
-  static inline void enable_pins(void) __attribute__((always_inline)) {
-    //converts the _SPI_CLOCK_DIVIDER into a bit rate, which is then converted back to divider in SPIConfigSetExpClock func
-	//A little roundabout, but needed to maintain compatibility, unfortunately. If changed macro in fastspi.h, would affect SoftwareSPI as well
-	unsigned long spibitrate = ((MAP_PRCMPeripheralClockGet(PRCM_GSPI))/(_SPI_CLOCK_DIVIDER));	
-	
-	//TODO: Determine if just want to run SPI at max value of 48 MHz. Defaults to 24 MHz w/ APA102
-	
+  static inline void enable_pins(void) __attribute__((always_inline)) {	
 	//configure Data & Clock pins (using PINMUX) to output to SPI
 	switch(_DATA_PIN) {
 		case 7: MAP_PinTypeSPI(PIN_07, PIN_MODE_7); break;
@@ -34,20 +43,10 @@ class ARMHardwareSPIOutput {
 		case 45: MAP_PinTypeSPI(PIN_45, PIN_MODE_7); break;
 		default: UART_PRINT("Error: Wrong clock pin tried to enable SPI. Use Pin 5 or 45.")
     }
-	
-	//Soft reset SPI module
-	MAP_SPIReset(GSPI_BASE);
-	MAP_SPIConfigSetExpClk(GSPI_BASE,MAP_PRCMPeripheralClockGet(PRCM_GSPI), \
-		spibitrate, SPI_MODE_MASTER, SPI_SUB_MODE_0, \
-		(SPI_SW_CTRL_CS | SPI_3PIN_MODE | SPI_TURBO_OFF | SPI_CS_ACTIVELOW | SPI_WL_8));
-	//Configure SPI for 24 MHz, Master, Mode 0, and a bunch of flags
-	//Force 8 bit words
-	MAP_SPIEnable(GSPI_BASE);
-	//TODO: improve using built-in FIFO registers
   }
 
   static inline void disable_pins(void) __attribute((always_inline)) {
-    MAP_SPIDisable(GSPI_BASE);
+    //MAP_SPIDisable(GSPI_BASE);
 	switch(_DATA_PIN) {
       case 7: MAP_PinTypeGPIO(PIN_07, PIN_MODE_0, false); break;
       case 52: MAP_PinTypeGPIO(PIN_52, PIN_MODE_0, false); break;
@@ -68,11 +67,29 @@ public:
 
   // initialize the SPI subssytem
   void init() {
-    FastPin<_DATA_PIN>::setOutput();
-    FastPin<_CLOCK_PIN>::setOutput();
+    //FastPin<_DATA_PIN>::setOutput();
+    //FastPin<_CLOCK_PIN>::setOutput();
 	
 	//Enable clock to SPI module
+	//TODO: Determine if just want to run SPI at max value of 40 (48?) MHz. Defaults to 24 MHz w/ APA102
 	MAP_PRCMPeripheralClkEnable(PRCM_GSPI, PRCM_RUN_MODE_CLK);	//Set SPI to internal clock source
+	
+	//converts the _SPI_CLOCK_DIVIDER into a bit rate, which is then converted back to divider in SPIConfigSetExpClock func
+	//A little roundabout, but needed to maintain compatibility, unfortunately. If changed macro in fastspi.h, would affect SoftwareSPI as well
+	unsigned long spibitrate = ((MAP_PRCMPeripheralClockGet(PRCM_GSPI))/(_SPI_CLOCK_DIVIDER));	
+	enable_pins();
+	
+	//Soft reset SPI module
+	MAP_PRCMPeripheralReset(PRCM_GSPI);
+	MAP_SPIReset(GSPI_BASE);
+	MAP_SPIConfigSetExpClk(GSPI_BASE, MAP_PRCMPeripheralClockGet(PRCM_GSPI), \
+		spibitrate, SPI_MODE_MASTER, SPI_SUB_MODE_0, \
+		(SPI_SW_CTRL_CS | SPI_3PIN_MODE | SPI_TURBO_OFF | SPI_CS_ACTIVELOW | SPI_WL_8));
+	//Configure SPI for 24 MHz, Master, Mode 0, and a bunch of flags
+	//Force 8 bit words
+	//TODO: decide if I want to use internal SPI FIFO
+	
+	MAP_SPIEnable(GSPI_BASE);
   }
 
   // latch the CS select
@@ -89,7 +106,7 @@ public:
   }
 
   // Wait for the word to be clear
-  static void wait() __attribute__((always_inline)) { while(!MAP_SPIIntStatus(GSPI_BASE, false) & SPI_INT_TX_EMPTY);  }
+  static void wait() __attribute__((always_inline)) { while(!(HWREG(ulBase + MCSPI_O_CH0STAT)&MCSPI_CH0STAT_TXS));  }
 
   // wait until all queued up data has been written
   void waitFully() { wait(); }
@@ -121,7 +138,7 @@ public:
   template <class D> void writeBytes(register uint8_t *data, int len) {
     uint8_t *end = data + len;
     select();
-    //TODO: could be optimized to write 16bit words out instead of 8bit bytes
+    //TODO: could be optimized to use MAP_SPITransfer()
     while(data != end) {
       writeByte(D::adjust(*data++));
     }
