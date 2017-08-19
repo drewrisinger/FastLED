@@ -47,8 +47,9 @@ class ARMHardwareSPIOutput {
 
   static inline void disable_pins(void) __attribute((always_inline)) {
     //MAP_SPIDisable(GSPI_BASE);
+	//doesn't actually disable, just turns them back to GPIO. not sure if this is most efficient way to disable
 	switch(_DATA_PIN) {
-      case 7: MAP_PinTypeGPIO(PIN_07, PIN_MODE_0, false); break;
+      case 7: MAP_PinTypeGPIO(PIN_07, PIN_MODE_0, false); break;		
       case 52: MAP_PinTypeGPIO(PIN_52, PIN_MODE_0, false); break;
     }
 
@@ -67,9 +68,6 @@ public:
 
   // initialize the SPI subssytem
   void init() {
-    //FastPin<_DATA_PIN>::setOutput();
-    //FastPin<_CLOCK_PIN>::setOutput();
-	
 	//Enable clock to SPI module
 	//TODO: Determine if just want to run SPI at max value of 40 (48?) MHz. Defaults to 24 MHz w/ APA102
 	MAP_PRCMPeripheralClkEnable(PRCM_GSPI, PRCM_RUN_MODE_CLK);	//Set SPI to internal clock source
@@ -79,7 +77,7 @@ public:
 	unsigned long spibitrate = ((MAP_PRCMPeripheralClockGet(PRCM_GSPI))/(_SPI_CLOCK_DIVIDER));	
 	enable_pins();
 	
-	//Soft reset SPI module
+	//Soft reset SPI module & initialize
 	MAP_PRCMPeripheralReset(PRCM_GSPI);
 	MAP_SPIReset(GSPI_BASE);
 	MAP_SPIConfigSetExpClk(GSPI_BASE, MAP_PRCMPeripheralClockGet(PRCM_GSPI), \
